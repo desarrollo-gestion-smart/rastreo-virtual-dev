@@ -115,8 +115,8 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   extra: {
     router: {},
     eas: {
-      projectId: "26537ce3-0e81-41d3-8321-89278b9257c0"
+      projectId: "21e05e97-11e5-44ab-94c5-891bc5b3105e"
     }
-  },
-  owner: "ejesatelital"
+  }
+  // Cuenta de pruebas (@gestion.global). Para producción: projectId "26537ce3-0e81-41d3-8321-89278b9257c0" y owner "ejesatelital"
 });

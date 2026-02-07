@@ -8,6 +8,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useTripStore } from '@/store/tripStore';
 import { getDistance } from '@/utils/geoUtils';
 import { EjetrackService } from './EjetrackService';
+import { EjetrackApi } from '@/api';
 
 export const LOCATION_TRACKING_TASK = 'LOCATION_TRACKING_TASK';
 const STORAGE_KEY_ACCUMULATED_DISTANCE = 'tracking_accumulated_distance';
@@ -15,13 +16,16 @@ const STORAGE_KEY_LAST_COORDINATE = 'tracking_last_coordinate';
 const STORAGE_KEY_LAST_SYNC_TIME = 'tracking_last_sync_time';
 const STORAGE_KEY_LAST_SYNC_COORDINATE = 'tracking_last_sync_coordinate';
 const STORAGE_KEY_LAST_SYNC_HEADING = 'tracking_last_sync_heading';
+/** Device ID y token para el task en segundo plano (pantalla apagada / cold start). */
+const STORAGE_KEY_TRACKING_DEVICE_ID = 'tracking_device_id';
+const STORAGE_KEY_TRACKING_AUTH_TOKEN = 'tracking_auth_token';
 
 const NOTIFICATION_ID = 'live_tracking';
 const CHANNEL_ID = 'live_channel_v2';
 const SYNC_CHANNEL_ID = 'sync_channel';
 const IOS_CATEGORY_ID = 'tracking_actions_category';
 
-const SYNC_INTERVAL_MS = 60000; // 60 segundos
+const SYNC_INTERVAL_MS = 30000; // 30 segundos (más frecuente para no perder puntos con pantalla apagada)
 const SYNC_DISTANCE_METERS = 1000; // 1000 metros
 const SYNC_ANGLE_DEGREES = 20; // 20 grados
 
@@ -223,6 +227,21 @@ export class LocationTrackingService {
 
             console.log(`✅ Tracking iniciado exitosamente - Task: ${LOCATION_TRACKING_TASK}`);
 
+            // Persistir device ID y token para el task en segundo plano (pantalla apagada / cold start)
+            try {
+                const { useDeviceStore } = require('@/store/deviceStore');
+                const currentDevice = useDeviceStore.getState().currentDevice;
+                const authHeader = EjetrackApi.defaults.headers.common['Authorization'] as string | undefined;
+                if (currentDevice?.id) {
+                    await AsyncStorage.setItem(STORAGE_KEY_TRACKING_DEVICE_ID, String(currentDevice.id));
+                }
+                if (authHeader && typeof authHeader === 'string') {
+                    await AsyncStorage.setItem(STORAGE_KEY_TRACKING_AUTH_TOKEN, authHeader);
+                }
+            } catch (persistErr) {
+                console.warn('[LocationTracking] No se pudieron persistir device/token para background:', persistErr);
+            }
+
             // Envío inicial de ubicación para validar que Ejetrack reciba la señal al iniciar ruta
             try {
                 const lastPos = await Location.getLastKnownPositionAsync();
@@ -340,6 +359,8 @@ export class LocationTrackingService {
         await AsyncStorage.removeItem(STORAGE_KEY_LAST_SYNC_TIME);
         await AsyncStorage.removeItem(STORAGE_KEY_LAST_SYNC_COORDINATE);
         await AsyncStorage.removeItem(STORAGE_KEY_LAST_SYNC_HEADING);
+        await AsyncStorage.removeItem(STORAGE_KEY_TRACKING_DEVICE_ID);
+        await AsyncStorage.removeItem(STORAGE_KEY_TRACKING_AUTH_TOKEN);
 
         // Cancelar explícitamente la notificación de tracking por ID con bloque try/catch específico
         try {
@@ -384,13 +405,16 @@ export class LocationTrackingService {
         await this.setupNotificationsConfig();
 
         if (Platform.OS === 'android') {
+            // No usar asForegroundService: true aquí: expo-location ya inicia su propio
+            // Foreground Service. Dos servicios en paralelo hacen que Android pueda detener
+            // las actualizaciones de ubicación cuando se apaga la pantalla.
             await notifee.displayNotification({
                 id: NOTIFICATION_ID,
                 title: `Ruta en curso`,
                 body: `Distancia: ${distanceKm.toFixed(2)} km  •  Vel: ${speedKmh.toFixed(0)} km/h`,
                 android: {
                     channelId: CHANNEL_ID,
-                    asForegroundService: true,
+                    asForegroundService: false,
                     ongoing: true,
                     onlyAlertOnce: true,
                     color: '#4CAF50',
@@ -577,9 +601,20 @@ TaskManager.defineTask(LOCATION_TRACKING_TASK, async ({ data, error }: any) => {
                 console.log(`[LocationTrackingTask] 🔄 Sync: T=${timeDiffSec}s, D=${distanceDiff.toFixed(1)}m`);
                 
                 const { useDeviceStore } = require('@/store/deviceStore');
-                const currentDevice = useDeviceStore.getState().currentDevice;
+                let deviceId: string | null = useDeviceStore.getState().currentDevice?.id?.toString() ?? null;
+                if (!deviceId) {
+                    const persistedId = await AsyncStorage.getItem(STORAGE_KEY_TRACKING_DEVICE_ID);
+                    if (persistedId) deviceId = persistedId;
+                }
+                if (!EjetrackApi.defaults.headers.common['Authorization']) {
+                    const persistedToken = await AsyncStorage.getItem(STORAGE_KEY_TRACKING_AUTH_TOKEN);
+                    if (persistedToken) {
+                        EjetrackApi.defaults.headers.common['Authorization'] = persistedToken;
+                        console.log('[LocationTrackingTask] Token restaurado desde almacenamiento para envío en segundo plano.');
+                    }
+                }
 
-                if (currentDevice && currentDevice.id) {
+                if (deviceId) {
                     let batteryPct = 100;
                     try {
                         const batteryLevel = await Battery.getBatteryLevelAsync();
@@ -587,7 +622,7 @@ TaskManager.defineTask(LOCATION_TRACKING_TASK, async ({ data, error }: any) => {
                     } catch (batErr) {}
 
                     const osmanPayload = EjetrackService.mapToOsman(
-                        currentDevice.id.toString(),
+                        deviceId,
                         location, 
                         {
                             ignition: true,
@@ -604,6 +639,8 @@ TaskManager.defineTask(LOCATION_TRACKING_TASK, async ({ data, error }: any) => {
                     
                     // Nota: sendLocation ya dispara processPendingLocations() internamente
                     // después de intentar el envío prioritario y guardar en DB.
+                } else {
+                    console.warn('[LocationTrackingTask] Sin device_id en store ni persistido, no se envía ubicación.');
                 }
 
                 memLastSyncTime = Date.now();

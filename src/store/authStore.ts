@@ -30,6 +30,7 @@ interface AuthState {
     isAuthenticated: boolean;
     syncProgress: SyncProgress;
     isHydrated: boolean;
+    notificationPermissionRequested: boolean;
     hasAccess: (permission: string) => boolean;
     hydrate: () => Promise<void>;
     login: (credentials: { email: string; password: string }) => Promise<void>;
@@ -53,6 +54,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         totalSteps: 4,
     },
     isHydrated: false,
+    notificationPermissionRequested: false,
 
     hasAccess: (permission: string) => {
         const user = get().currentUser;
@@ -116,7 +118,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
                 useDeviceStore.getState().clearStore();
             })(),
         ]);
-        set({ currentUser: null, currentEmployee: null, isAuthenticated: false, syncProgress: { status: 'idle', message: '', currentStep: 0, totalSteps: 4 } });
+        set({ currentUser: null, currentEmployee: null, isAuthenticated: false, syncProgress: { status: 'idle', message: '', currentStep: 0, totalSteps: 4 }, notificationPermissionRequested: false });
         console.log('Limpieza de datos completada.');
     },
 

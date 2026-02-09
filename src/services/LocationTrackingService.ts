@@ -1,6 +1,7 @@
 import * as Location from 'expo-location';
 import * as Battery from 'expo-battery';
 import * as TaskManager from 'expo-task-manager';
+import * as KeepAwake from 'expo-keep-awake';
 import notifee, { AndroidImportance, AndroidCategory, AndroidVisibility, AndroidStyle } from '@notifee/react-native';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
@@ -22,12 +23,14 @@ const STORAGE_KEY_TRACKING_AUTH_TOKEN = 'tracking_auth_token';
 
 const NOTIFICATION_ID = 'live_tracking';
 const CHANNEL_ID = 'live_channel_v2';
+const WAKE_LOCK_TAG = 'location-tracking';
 const SYNC_CHANNEL_ID = 'sync_channel';
 const IOS_CATEGORY_ID = 'tracking_actions_category';
 
-const SYNC_INTERVAL_MS = 30000; // 30 segundos (más frecuente para no perder puntos con pantalla apagada)
-const SYNC_DISTANCE_METERS = 1000; // 1000 metros
-const SYNC_ANGLE_DEGREES = 20; // 20 grados
+const SYNC_INTERVAL_MS = 60000; // 60 segundos
+const SYNC_DISTANCE_METERS = 3000; // 3000 metros
+const SYNC_ANGLE_DEGREES = 35; // 35 grados
+const MIN_SPEED_KMH = 0.1; // Anti-drift: no enviar posición cuando está quieto (< 0.1 km/h)
 
 // Variables en memoria para acceso rápido durante la ejecución de la tarea
 let memLastCoordinate: { latitude: number; longitude: number } | null = null;
@@ -75,41 +78,6 @@ export class LocationTrackingService {
         }
     }
 
-    /**
-     * Verifica y solicita el permiso de ahorro de datos en Android.
-     */
-    public static async checkDataSaverPermission() {
-        if (Platform.OS !== 'android') return;
-
-        try {
-            const HAS_SHOWN_DATA_SAVER_WARNING = 'has_shown_data_saver_warning';
-            const shown = await AsyncStorage.getItem(HAS_SHOWN_DATA_SAVER_WARNING);
-            
-            if (shown === 'true') return;
-
-            const { Alert, Linking } = require('react-native');
-            
-            // Retrasamos un poco la alerta para no interferir con la hidratación inicial
-            setTimeout(() => {
-                Alert.alert(
-                    "Configuración de Datos",
-                    "Para asegurar que el GPS funcione en segundo plano sin interrupciones, por favor permite el 'Uso de datos sin restricción' en los ajustes de la aplicación en la opcion Datos.",
-                    [
-                        { 
-                            text: "Ir a Ajustes", 
-                            onPress: () => {
-                                Linking.openSettings();
-                                AsyncStorage.setItem(HAS_SHOWN_DATA_SAVER_WARNING, 'true');
-                            } 
-                        }
-                    ]
-                );
-            }, 2000);
-        } catch (error) {
-            console.error('Error al verificar ahorro de datos:', error);
-        }
-    }
-
     private static stopForegroundPromise: (() => void) | null = null;
 
     /**
@@ -154,7 +122,8 @@ export class LocationTrackingService {
     public static async startTracking(forceRestart: boolean = true) {
         if (Platform.OS === 'android') {
             this.setupForegroundService();
-            await this.checkDataSaverPermission();
+            const { runOptimizationSetupIfNeeded } = require('./OptimizationSetupService');
+            await runOptimizationSetupIfNeeded();
         }
 
         if (Platform.OS === 'android' && (Platform.Version as number) >= 33) {
@@ -213,7 +182,8 @@ export class LocationTrackingService {
 
             await Location.startLocationUpdatesAsync(LOCATION_TRACKING_TASK, {
                 accuracy: Location.Accuracy.BestForNavigation,
-                timeInterval: 6000, // Reduced to 3s for better sampling
+                // le pido al gps que me envíe una posición cada 10 segundos
+                timeInterval: 10000, 
                 distanceInterval: 0, // Set to 0 to receive ALL updates and filter them in JS
                 showsBackgroundLocationIndicator: true,
                 foregroundService: {
@@ -226,6 +196,17 @@ export class LocationTrackingService {
             });
 
             console.log(`✅ Tracking iniciado exitosamente - Task: ${LOCATION_TRACKING_TASK}`);
+
+            // Wake Lock: evita que el dispositivo entre en modo ahorro profundo durante el rastreo
+            // (reduce probabilidad de que Android detenga el envío de posiciones con pantalla apagada)
+            if (Platform.OS === 'android') {
+                try {
+                    await KeepAwake.activateKeepAwakeAsync(WAKE_LOCK_TAG);
+                    console.log('[LocationTracking] Wake Lock activado');
+                } catch (wakeErr) {
+                    console.warn('[LocationTracking] No se pudo activar Wake Lock:', wakeErr);
+                }
+            }
 
             // Persistir device ID y token para el task en segundo plano (pantalla apagada / cold start)
             try {
@@ -349,6 +330,16 @@ export class LocationTrackingService {
             }
         }
     
+        // Liberar Wake Lock
+        if (Platform.OS === 'android') {
+            try {
+                await KeepAwake.deactivateKeepAwake(WAKE_LOCK_TAG);
+                console.log('[LocationTracking] Wake Lock liberado');
+            } catch (wakeErr) {
+                console.warn('[LocationTracking] Error al liberar Wake Lock:', wakeErr);
+            }
+        }
+
         memLastCoordinate = null;
         memAccumulatedDistance = 0;
         isStateHydrated = false;
@@ -546,22 +537,22 @@ TaskManager.defineTask(LOCATION_TRACKING_TASK, async ({ data, error }: any) => {
                 continue; 
             }
 
-            // --- FILTER 2: STATIC NOISE (Anti-Drift) ---
-            // Discard points as static noise if movement is minimal compared to accuracy and speed is low
+            currentSpeed = speed ?? 0;
+            const speedKmh = currentSpeed * 3.6;
+
+            // --- FILTER 2: ANTI-DRIFT ---
+            // No enviar posición cuando el dispositivo está quieto (< 0.1 km/h)
+            if (speedKmh < MIN_SPEED_KMH) {
+                console.log(`[GPS] Ignored stationary (${speedKmh.toFixed(2)} km/h < ${MIN_SPEED_KMH})`);
+                continue;
+            }
+
+            // Distancia desde el último punto (para acumular recorrido)
             const distFromLast = memLastCoordinate 
                 ? getDistance(memLastCoordinate.latitude, memLastCoordinate.longitude, latitude, longitude)
                 : 0;
 
-            // [ANTI-DRIFT] Filtro de precisión dinámica
-            const isStaticDrift = accuracy && distFromLast < (accuracy * 0.5) && (speed === null || speed < 1.0);
-
-            if (memLastCoordinate && isStaticDrift) {
-                console.log(`[GPS] Ignored static drift: dist=${distFromLast.toFixed(1)}m, acc=${accuracy}m, speed=${speed}m/s`);
-                continue;
-            }
-
             // --- VALID POINT LOGIC ---
-            currentSpeed = speed || 0;
             hasValidUpdate = true;
 
             if (memLastCoordinate) {

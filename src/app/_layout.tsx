@@ -144,6 +144,7 @@ export default function RootLayout() {
                 try {
                     // A. Obtenemos el token (Si no tiene permisos, pedirá. Si ya tiene, lo recupera rápido)
                     const token = await notificationService.registerForPushNotificationsAsync();
+                    useAuthStore.setState({ notificationPermissionRequested: true });
                     
                     // B. Lo enviamos a Laravel usando tu nuevo SyncManager
                     if (token) {
@@ -153,6 +154,7 @@ export default function RootLayout() {
                     }
                 } catch (error) {
                     console.error("❌ Error en flujo de sincronización de token:", error);
+                    useAuthStore.setState({ notificationPermissionRequested: true });
                 }
             }
         };

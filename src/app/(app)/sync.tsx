@@ -39,14 +39,8 @@ const SyncProgressScreen = () => {
     useEffect(() => {
         if (syncProgress.status === 'success') {
             console.log("Sincronización completada, redirigiendo al home...");
-            // Usamos replace para que el usuario no pueda volver atrás a esta pantalla
             router.replace('/');
         }
-        // Considera manejar el estado 'error' aquí también si quieres mostrar un mensaje
-        // antes de, por ejemplo, redirigir al login o permitir reintentar.
-        // else if (syncProgress.status === 'error') {
-        //   Alert.alert("Error", "No se pudo completar la sincronización.");
-        // }
     }, [syncProgress.status]); // Depende solo del estado de sync
 
     // Si por alguna razón llegamos aquí sin usuario, podríamos mostrar un mensaje o redirigir

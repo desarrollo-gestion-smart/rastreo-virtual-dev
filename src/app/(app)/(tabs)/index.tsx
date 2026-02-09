@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { StyleSheet, View, ScrollView, Image, TouchableOpacity, Platform, Linking, Dimensions, Alert } from 'react-native';
-import { Text, Card, useTheme, Icon, Banner } from 'react-native-paper';
+import { StyleSheet, View, ScrollView, Image, TouchableOpacity, Platform, Linking, Dimensions, Alert, Modal, Pressable } from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withSpring, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
+import { Text, Card, useTheme, Icon, Banner, ActivityIndicator } from 'react-native-paper';
 import { useDeviceStore } from '@/store/deviceStore';
 import { LocationTrackingService } from '@/services/LocationTrackingService';
+import { prepareForTracking, getLocationPermissionStatus } from '@/services/LocationPermissionFlow';
+import { openAppSettingsForBattery, markBatteryModalShown, hasShownBatteryModal } from '@/services/OptimizationSetupService';
 import { useCompanyStore } from '@/store/companyStore';
 import { useTripStore } from '@/store/tripStore';
 import { useRouter } from 'expo-router';
@@ -10,14 +13,18 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import * as Application from 'expo-application';
 import { useServerConnection } from '@/hooks/use-server-connection';
+import { useAuthStore } from '@/store/authStore';
 
 const { width } = Dimensions.get('window');
+
+let hasRequestedStartupLocationPermissions = false;
 
 // Componente principal de la pantalla de inicio
 const HomeScreen = () => {
     const theme = useTheme();
     const router = useRouter();
     const { isConnectedToInternet, isServerReachable, serverData, isChecking, recheckConnection } = useServerConnection();
+    const notificationPermissionRequested = useAuthStore((s) => s.notificationPermissionRequested);
     const currentDevice = useDeviceStore((state) => state.currentDevice);
     const currentCompany = useCompanyStore((state) => state.currentCompany);
     const { isTrackingActive, setIsTrackingActive, hydrate: hydrateTrip } = useTripStore();
@@ -26,6 +33,46 @@ const HomeScreen = () => {
     // Estado para la actualización
     const [updateAvailable, setUpdateAvailable] = useState(false);
     const [latestVersionStr, setLatestVersionStr] = useState('');
+    const [showPermissionModal, setShowPermissionModal] = useState(false);
+    const [showBatteryModal, setShowBatteryModal] = useState(false);
+    const [isStartingTracking, setIsStartingTracking] = useState(false);
+
+    // Mostrar modal de ubicación solo después de que se hayan pedido las notificaciones
+    useEffect(() => {
+        const checkAndShowPermissionModal = async () => {
+            if (!notificationPermissionRequested || hasRequestedStartupLocationPermissions) return;
+            const status = await getLocationPermissionStatus();
+            if (status !== 'granted_background') {
+                hasRequestedStartupLocationPermissions = true;
+                setShowPermissionModal(true);
+            }
+        };
+        checkAndShowPermissionModal();
+    }, [notificationPermissionRequested]);
+
+    const handlePermissionModalAccept = async () => {
+        setShowPermissionModal(false);
+        const result = await prepareForTracking();
+        if (result === 'ready' && Platform.OS === 'android') {
+            const alreadyShown = await hasShownBatteryModal();
+            if (!alreadyShown) setShowBatteryModal(true);
+        }
+    };
+
+    const handlePermissionModalSkip = () => {
+        setShowPermissionModal(false);
+    };
+
+    const handleBatteryModalConfigurar = async () => {
+        await openAppSettingsForBattery();
+        await markBatteryModalShown();
+        setShowBatteryModal(false);
+    };
+
+    const handleBatteryModalSkip = async () => {
+        await markBatteryModalShown();
+        setShowBatteryModal(false);
+    };
 
     useEffect(() => {
         const checkVersionData = async () => {
@@ -48,11 +95,6 @@ const HomeScreen = () => {
         };
 
         checkVersionData();
-        
-        // Verificar permiso de ahorro de datos al iniciar
-        if (Platform.OS === 'android') {
-            LocationTrackingService.checkDataSaverPermission();
-        }
     }, [serverData]);
 
     // --- NAVEGACIÓN ---
@@ -87,13 +129,44 @@ const HomeScreen = () => {
                 ]
             );
         } else {
-            await LocationTrackingService.startTracking();
-            await setIsTrackingActive(true);
+            setIsStartingTracking(true);
+            try {
+                const result = await prepareForTracking();
+                if (result !== 'ready') return;
+                await LocationTrackingService.startTracking();
+                await setIsTrackingActive(true);
+            } finally {
+                setIsStartingTracking(false);
+            }
         }
     };
     const showOfflineBanner = isConnectedToInternet === false;
     const showPartialConnectionBanner = isConnectedToInternet === true && isServerReachable === false;
     const isDark = theme.dark;
+
+    // Animaciones del botón Iniciar/Finalizar Ruta
+    const buttonScale = useSharedValue(1);
+    const iconPulse = useSharedValue(1);
+    const buttonAnimatedStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: buttonScale.value }],
+    }));
+    const iconAnimatedStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: iconPulse.value }],
+    }));
+    useEffect(() => {
+        if (isTrackingActive) {
+            iconPulse.value = withRepeat(
+                withSequence(
+                    withTiming(1.06, { duration: 800 }),
+                    withTiming(1, { duration: 800 })
+                ),
+                -1,
+                true
+            );
+        } else {
+            iconPulse.value = withTiming(1, { duration: 200 });
+        }
+    }, [isTrackingActive]);
 
     return (
         <View style={{ flex: 1, backgroundColor: theme.colors.background }}>
@@ -167,33 +240,193 @@ const HomeScreen = () => {
                     </LinearGradient>
                 </Card>
 
-                {/* --- NUEVA CUADRÍCULA DE BOTONES --- */}
+                {/* Botón Iniciar / Finalizar Ruta */}
                 <View style={styles.gridContainer}>
-
-
-                    {/* 4. MIS VIAJES (Naranja - Reemplaza estadísticas) */}
-                    <TouchableOpacity  onPress={handleToggleTracking} activeOpacity={0.9} style={{ width: '100%' }}>
-                        <LinearGradient
-                            colors={isTrackingActive
-                                ? ['#ff5252', '#d32f2f'] // Rojo para finalizar
-                                : ['#11ff00', '#008f2b'] // Naranja para iniciar (o fucsia si prefieres: ['#E91E63', '#C2185B'])
-                            }
-                            style={styles.actionGradient}
-                        >
-                            <Icon
-                                source={isTrackingActive ? "stop-circle-outline" : "play-circle-outline"}
-                                size={60}
-                                color="#fff"
-                            />
-                            <Text style={styles.actionLabel}>
-                                {isTrackingActive ? 'Finalizar Ruta' : 'Iniciar Ruta'}
-                            </Text>
-                        </LinearGradient>
-                    </TouchableOpacity>
+                    <Pressable
+                        onPress={handleToggleTracking}
+                        onPressIn={() => { buttonScale.value = withSpring(0.96, { damping: 15, stiffness: 400 }); }}
+                        onPressOut={() => { buttonScale.value = withSpring(1); }}
+                        style={styles.actionButtonWrapper}
+                        disabled={isStartingTracking}
+                    >
+                        <Animated.View style={buttonAnimatedStyle}>
+                            <Card style={[styles.actionCard, { backgroundColor: 'transparent', elevation: 6, shadowOpacity: 0.2 }]}>
+                                <LinearGradient
+                                    colors={isTrackingActive
+                                        ? ['#FF6B6B', '#EE5A5A', '#C0392B']
+                                        : ['#00B894', '#00A085', '#00897B']
+                                    }
+                                    start={{ x: 0, y: 0 }}
+                                    end={{ x: 1, y: 1 }}
+                                    style={styles.actionGradient}
+                                >
+                                    {isStartingTracking ? (
+                                        <>
+                                            <ActivityIndicator size="small" color="rgba(255,255,255,0.95)" style={{ marginBottom: 10 }} />
+                                            <Text style={styles.actionLabel}>Iniciando...</Text>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Animated.View style={[styles.actionIconCircle, iconAnimatedStyle]}>
+                                                <Icon
+                                                    source={isTrackingActive ? "stop-circle" : "play-circle"}
+                                                    size={36}
+                                                    color="rgba(255,255,255,0.95)"
+                                                />
+                                            </Animated.View>
+                                            <Text style={styles.actionLabel}>
+                                                {isTrackingActive ? 'Finalizar Ruta' : 'Iniciar Ruta'}
+                                            </Text>
+                                            <Text style={styles.actionSublabel}>
+                                                {isTrackingActive ? 'Dejar de transmitir ubicación' : 'Empezar a transmitir ubicación'}
+                                            </Text>
+                                        </>
+                                    )}
+                                </LinearGradient>
+                            </Card>
+                        </Animated.View>
+                    </Pressable>
                 </View>
 
                 <View style={{ height: 40 }} />
             </ScrollView>
+
+            {/* Modal de permisos de ubicación */}
+            <Modal
+                visible={showPermissionModal}
+                transparent
+                animationType="fade"
+                onRequestClose={handlePermissionModalSkip}
+            >
+                <Pressable
+                    style={styles.modalOverlay}
+                    onPress={handlePermissionModalSkip}
+                >
+                    <Pressable
+                        style={[styles.modalContent, { backgroundColor: theme.colors.surface }]}
+                        onPress={(e) => e.stopPropagation()}
+                    >
+                        <LinearGradient
+                            colors={isDark ? ['#1a237e', '#3949ab'] : ['#3a47d5', '#0072ff']}
+                            style={styles.modalHeader}
+                        >
+                            <Icon source="map-marker-radius" size={48} color="#fff" />
+                            <Text variant="titleLarge" style={styles.modalTitle}>
+                                Permisos de ubicación
+                            </Text>
+                        </LinearGradient>
+
+                        <View style={styles.modalBody}>
+                            <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, marginBottom: 16, textAlign: 'center' }}>
+                                Para registrar tu ruta necesitamos acceso a tu ubicación. A continuación aparecerán dos diálogos del sistema.
+                            </Text>
+                            <View style={[styles.modalStep, { backgroundColor: theme.colors.surfaceVariant }]}>
+                                <Text variant="labelLarge" style={{ color: theme.colors.primary, marginBottom: 4 }}>
+                                    1.er diálogo
+                                </Text>
+                                <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                                    Selecciona <Text style={{ fontWeight: '700' }}>"Mientras usas la app"</Text>
+                                </Text>
+                            </View>
+                            <View style={[styles.modalStep, { backgroundColor: theme.colors.surfaceVariant }]}>
+                                <Text variant="labelLarge" style={{ color: theme.colors.primary, marginBottom: 4 }}>
+                                    2.º diálogo
+                                </Text>
+                                <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                                    Selecciona <Text style={{ fontWeight: '700' }}>"Permitir siempre"</Text> para que el rastreo funcione con la pantalla apagada.
+                                </Text>
+                            </View>
+                        </View>
+
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                onPress={handlePermissionModalAccept}
+                                activeOpacity={0.8}
+                                style={styles.modalPrimaryButton}
+                            >
+                                <LinearGradient
+                                    colors={['#00C853', '#008f2b']}
+                                    style={styles.modalPrimaryButtonGradient}
+                                >
+                                    <Icon source="check-circle" size={22} color="#fff" />
+                                    <Text style={styles.modalPrimaryButtonText}>Dar permisos</Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                            <Pressable onPress={handlePermissionModalSkip} style={styles.modalSkipButton}>
+                                <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                                    Ahora no
+                                </Text>
+                            </Pressable>
+                        </View>
+                    </Pressable>
+                </Pressable>
+            </Modal>
+
+            {/* Modal de restricción de batería (Android) */}
+            <Modal
+                visible={showBatteryModal}
+                transparent
+                animationType="fade"
+                onRequestClose={handleBatteryModalSkip}
+            >
+                <Pressable
+                    style={styles.modalOverlay}
+                    onPress={handleBatteryModalSkip}
+                >
+                    <Pressable
+                        style={[styles.modalContent, { backgroundColor: theme.colors.surface }]}
+                        onPress={(e) => e.stopPropagation()}
+                    >
+                        <LinearGradient
+                            colors={isDark ? ['#e65100', '#ff6f00'] : ['#ff6f00', '#ff9800']}
+                            style={styles.modalHeader}
+                        >
+                            <Icon source="battery-sync" size={48} color="#fff" />
+                            <Text variant="titleLarge" style={styles.modalTitle}>
+                                Quitar restricción de batería
+                            </Text>
+                        </LinearGradient>
+
+                        <View style={styles.modalBody}>
+                            <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, marginBottom: 16, textAlign: 'center' }}>
+                                Para que la ubicación siga enviándose con la pantalla apagada, necesitamos que quites la restricción de batería de la app.
+                            </Text>
+                            <View style={[styles.modalStep, { backgroundColor: theme.colors.surfaceVariant }]}>
+                                <Text variant="labelLarge" style={{ color: theme.colors.primary, marginBottom: 4 }}>
+                                    Qué hacer
+                                </Text>
+                                <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                                    1. Toca <Text style={{ fontWeight: '700' }}>"Batería"</Text> o "Uso de batería"{'\n'}
+                                    2. Toca <Text style={{ fontWeight: '700' }}>"Optimización de batería"</Text> o "No optimizar"{'\n'}
+                                    3. Busca <Text style={{ fontWeight: '700' }}>"Rastreo Virtual"</Text>{'\n'}
+                                    4. Selecciona <Text style={{ fontWeight: '700' }}>"Sin restricciones"</Text> o "No optimizar"
+                                </Text>
+                            </View>
+                        </View>
+
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                onPress={handleBatteryModalConfigurar}
+                                activeOpacity={0.8}
+                                style={styles.modalPrimaryButton}
+                            >
+                                <LinearGradient
+                                    colors={['#ff9800', '#f57c00']}
+                                    style={styles.modalPrimaryButtonGradient}
+                                >
+                                    <Icon source="battery-check" size={22} color="#fff" />
+                                    <Text style={styles.modalPrimaryButtonText}>Ir a Ajustes</Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                            <Pressable onPress={handleBatteryModalSkip} style={styles.modalSkipButton}>
+                                <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                                    Ahora no
+                                </Text>
+                            </Pressable>
+                        </View>
+                    </Pressable>
+                </Pressable>
+            </Modal>
         </View>
     );
 };
@@ -261,51 +494,110 @@ const styles = StyleSheet.create({
         marginLeft: 8,
     },
 
-    // --- NUEVOS ESTILOS GRID (CUADRÍCULA) ---
     gridContainer: {
         marginTop: 10,
     },
-
-    gridGradient: {
-        flex: 1,
-        borderRadius: 20,
-        justifyContent: 'center',
-        alignItems: 'center',
-        padding: 10,
+    actionButtonWrapper: {
+        width: '100%',
     },
-    gridLabel: {
+    actionCard: {
+        borderRadius: 16,
+        overflow: 'hidden',
+        elevation: 6,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+    },
+    actionGradient: {
+        borderRadius: 16,
+        paddingVertical: 18,
+        paddingHorizontal: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    actionIconCircle: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        backgroundColor: 'rgba(255,255,255,0.22)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 10,
+    },
+    actionLabel: {
         color: 'white',
         fontSize: 17,
-        fontWeight: 'bold',
-        marginTop: 12,
+        fontWeight: '700',
+        letterSpacing: 0.3,
         textAlign: 'center',
     },
-    actionContainer: {
-        marginTop: 10,
-        alignItems: 'center',
+    actionSublabel: {
+        color: 'rgba(255,255,255,0.88)',
+        fontSize: 12,
+        marginTop: 4,
+        fontWeight: '500',
     },
-    actionButton: {
+    modalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.5)',
+        justifyContent: 'center',
+        alignItems: 'center',
+        padding: 24,
+    },
+    modalContent: {
         width: '100%',
-        height: 180,
-        borderRadius: 20,
+        maxWidth: 360,
+        borderRadius: 24,
+        overflow: 'hidden',
         elevation: 8,
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
-        shadowRadius: 5,
+        shadowRadius: 8,
     },
-    actionGradient: {
-        borderRadius: 20,
-        justifyContent: 'center',
+    modalHeader: {
         alignItems: 'center',
-        padding: 40, // Aumentado para dar más presencia al ser botón único
+        paddingVertical: 24,
+        paddingHorizontal: 20,
     },
-    actionLabel: {
-        color: 'white',
-        fontSize: 24,
-        fontWeight: 'bold',
-        marginTop: 15,
-        textAlign: 'center',
+    modalTitle: {
+        color: '#fff',
+        fontWeight: '700',
+        marginTop: 12,
+    },
+    modalBody: {
+        padding: 20,
+    },
+    modalStep: {
+        padding: 14,
+        borderRadius: 12,
+        marginBottom: 12,
+    },
+    modalActions: {
+        padding: 20,
+        paddingTop: 8,
+    },
+    modalPrimaryButton: {
+        borderRadius: 14,
+        overflow: 'hidden',
+        marginBottom: 12,
+    },
+    modalPrimaryButtonGradient: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 14,
+        gap: 8,
+    },
+    modalPrimaryButtonText: {
+        color: '#fff',
+        fontWeight: '700',
+        fontSize: 16,
+    },
+    modalSkipButton: {
+        alignItems: 'center',
+        paddingVertical: 8,
     },
 });
 

@@ -48,7 +48,34 @@ export default function AppLayout() {
                     swipeEnabled: false,
                 }}
             />
-            {/* Grupo de preguntas */}
+            <Drawer.Screen
+                name="configuracion"
+                options={{
+                    drawerItemStyle: { height: 0, display: 'none' },
+                    headerShown: false,
+                }}
+            />
+            <Drawer.Screen
+                name="transmision-datos"
+                options={{
+                    drawerItemStyle: { height: 0, display: 'none' },
+                    headerShown: false,
+                }}
+            />
+            <Drawer.Screen
+                name="location-permission-education"
+                options={{
+                    drawerItemStyle: { height: 0, display: 'none' },
+                    headerShown: false,
+                }}
+            />
+            <Drawer.Screen
+                name="permisos-ubicacion"
+                options={{
+                    drawerItemStyle: { height: 0, display: 'none' },
+                    headerShown: false,
+                }}
+            />
 
 
         </Drawer>

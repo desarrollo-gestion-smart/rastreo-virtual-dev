@@ -200,7 +200,7 @@ export class EjetrackService {
 
                 const count = await pendingLocationService.getPendingCount();
                 const BATCH_SIZE = 100; // Procesar en bloques de 100 como se solicitó
-                const MAX_WAIT_TIME_SEC = 2 * 60; // 2 minutos en segundos
+                const MAX_WAIT_TIME_SEC = 30; // 30 segundos máx. antes de forzar envío de pendientes
                 let shouldSend = forceAll;
 
                 if (!shouldSend && count >= BATCH_SIZE) {

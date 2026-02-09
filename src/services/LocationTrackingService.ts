@@ -27,10 +27,9 @@ const WAKE_LOCK_TAG = 'location-tracking';
 const SYNC_CHANNEL_ID = 'sync_channel';
 const IOS_CATEGORY_ID = 'tracking_actions_category';
 
-const SYNC_INTERVAL_MS = 60000; // 60 segundos
-const SYNC_DISTANCE_METERS = 3000; // 3000 metros
-const SYNC_ANGLE_DEGREES = 35; // 35 grados
-const MIN_SPEED_KMH = 0.1; // Anti-drift: no enviar posición cuando está quieto (< 0.1 km/h)
+const SYNC_INTERVAL_MS = 30000; // 30 segundos — intervalo de envío al servidor
+const SYNC_DISTANCE_METERS = 500;  // 500 metros — enviar también al recorrer esta distancia
+const SYNC_ANGLE_DEGREES = 35;    // 35 grados
 
 // Variables en memoria para acceso rápido durante la ejecución de la tarea
 let memLastCoordinate: { latitude: number; longitude: number } | null = null;
@@ -182,8 +181,8 @@ export class LocationTrackingService {
 
             await Location.startLocationUpdatesAsync(LOCATION_TRACKING_TASK, {
                 accuracy: Location.Accuracy.BestForNavigation,
-                // le pido al gps que me envíe una posición cada 10 segundos
-                timeInterval: 10000, 
+                // le pido al gps que me envíe una posición cada 6 segundos
+                timeInterval: 6000, 
                 distanceInterval: 0, // Set to 0 to receive ALL updates and filter them in JS
                 showsBackgroundLocationIndicator: true,
                 foregroundService: {
@@ -539,13 +538,6 @@ TaskManager.defineTask(LOCATION_TRACKING_TASK, async ({ data, error }: any) => {
 
             currentSpeed = speed ?? 0;
             const speedKmh = currentSpeed * 3.6;
-
-            // --- FILTER 2: ANTI-DRIFT ---
-            // No enviar posición cuando el dispositivo está quieto (< 0.1 km/h)
-            if (speedKmh < MIN_SPEED_KMH) {
-                console.log(`[GPS] Ignored stationary (${speedKmh.toFixed(2)} km/h < ${MIN_SPEED_KMH})`);
-                continue;
-            }
 
             // Distancia desde el último punto (para acumular recorrido)
             const distFromLast = memLastCoordinate 

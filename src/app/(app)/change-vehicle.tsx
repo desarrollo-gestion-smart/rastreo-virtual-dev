@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { StyleSheet, View, TouchableOpacity, FlatList, Platform } from 'react-native';
-import { Text, Button, useTheme, Icon, ActivityIndicator, Searchbar, Appbar } from 'react-native-paper';
+import { Text, useTheme, Icon, ActivityIndicator, Searchbar, Appbar } from 'react-native-paper';
 import { useDeviceStore } from '@/store/deviceStore';
 import { useRouter } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Image } from 'expo-image'; // Usamos expo-image para cacheo
+import { Image } from 'expo-image';
 import { type Device } from '@/models/device-model';
 
 // Interfaz para el item de la lista
@@ -56,11 +56,12 @@ const ChangeVehicleScreen = () => {
     };
 
     const isDark = theme.dark;
+    const listBottomPadding = insets.bottom + 24;
 
-    // Header personalizado
+    // Header: blanco y azul en modo claro
     const renderHeader = () => (
         <LinearGradient
-            colors={isDark ? ['#1a1a1a', '#2c2c2c'] : ['#E91E63', '#9C27B0']} // Gradiente del header
+            colors={isDark ? ['#1a1a1a', '#2c2c2c'] : ['#0085FF', '#0058D6']}
             style={[styles.header, { paddingTop: insets.top }]}
         >
             <Appbar.Header style={styles.appbar}>
@@ -71,20 +72,22 @@ const ChangeVehicleScreen = () => {
                 placeholder="Buscar vehículo..."
                 onChangeText={setSearchQuery}
                 value={searchQuery}
-                style={[styles.searchbar, { backgroundColor: isDark ? theme.colors.surface : 'white' }]}
-                iconColor={theme.colors.primary}
+                style={[styles.searchbar, { backgroundColor: isDark ? theme.colors.surface : '#fff' }]}
+                inputStyle={styles.searchbarInput}
+                iconColor={isDark ? theme.colors.primary : '#0085FF'}
                 textColor={theme.colors.onSurface}
                 placeholderTextColor={theme.colors.onSurfaceVariant}
             />
         </LinearGradient>
     );
 
-    // Render de cada item
-    const renderItem = ({ item }: { item: SelectableVehicle }) => {
+    // Render de cada item — modo claro: blanco/azul; último ítem con margen
+    const renderItem = ({ item, index }: { item: SelectableVehicle; index: number }) => {
         const isSelected = item.id === currentDevice?.id;
-        const color = isSelected ? 'white' : theme.colors.onSurface; // Color de texto
-        const borderColor = isSelected ? 'transparent' : (isDark ? '#444' : '#E91E63'); // Borde rosa/rojo
-        const imagePlaceholder = `https://via.placeholder.com/60/CCCCCC/FFFFFF?text=${item.label.charAt(0)}`;
+        const isLast = index === filteredItems.length - 1;
+        const color = isSelected ? '#fff' : theme.colors.onSurface;
+        const borderColor = isSelected ? 'transparent' : (isDark ? '#444' : '#0085FF');
+        const imagePlaceholder = `https://via.placeholder.com/60/${isDark ? '444' : 'E3F2FD'}/${isDark ? '666' : '0085FF'}?text=${item.label.charAt(0)}`;
 
         const itemContent = (
             <View style={styles.itemContent}>
@@ -95,35 +98,38 @@ const ChangeVehicleScreen = () => {
                     contentFit="cover"
                     transition={300}
                 />
-                <Text style={[styles.itemText, { color }]}>{item.label}</Text>
+                <Text style={[styles.itemText, { color }]} numberOfLines={1}>{item.label}</Text>
+                {isSelected && <Icon source="check-circle" size={20} color="#fff" />}
             </View>
         );
 
         return (
-            <TouchableOpacity onPress={() => handleSelectDevice(item.id)}>
-                {isSelected ? (
-                    <LinearGradient
-                        colors={isDark ? ['#333', '#444'] : ['#FF8C00', '#E91E63']} // Gradiente Naranja a Rosa
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 0 }}
-                        style={[styles.itemCard, styles.itemCardSelected]}
-                    >
-                        {itemContent}
-                    </LinearGradient>
-                ) : (
-                    <View style={[styles.itemCard, styles.itemCardUnselected, { 
-                        borderColor, 
-                        backgroundColor: theme.colors.surface 
-                    }]}>
-                        {itemContent}
-                    </View>
-                )}
-            </TouchableOpacity>
+            <View style={[styles.itemWrapper, isLast && { marginBottom: 12 }]}>
+                <TouchableOpacity onPress={() => handleSelectDevice(item.id)} activeOpacity={0.8}>
+                    {isSelected ? (
+                        <LinearGradient
+                            colors={isDark ? ['#333', '#444'] : ['#0085FF', '#0058D6']}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                            style={[styles.itemCard, styles.itemCardSelected]}
+                        >
+                            {itemContent}
+                        </LinearGradient>
+                    ) : (
+                        <View style={[styles.itemCard, styles.itemCardUnselected, {
+                            borderColor,
+                            backgroundColor: isDark ? theme.colors.surface : '#fff',
+                        }]}>
+                            {itemContent}
+                        </View>
+                    )}
+                </TouchableOpacity>
+            </View>
         );
     };
 
     return (
-        <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+        <View style={[styles.container, { backgroundColor: isDark ? theme.colors.background : '#F5F9FF' }]}>
             {renderHeader()}
             {loading ? (
                 <ActivityIndicator style={{ marginTop: 20 }} size="large" />
@@ -132,12 +138,13 @@ const ChangeVehicleScreen = () => {
                     data={filteredItems}
                     keyExtractor={(item) => String(item.id)}
                     style={styles.list}
+                    contentContainerStyle={[styles.listContent, { paddingBottom: listBottomPadding }]}
                     renderItem={renderItem}
                     ListEmptyComponent={() => (
-                         <View style={styles.emptyContainer}>
-                             <Icon source="magnify-close" size={40} color={theme.colors.outline}/>
-                             <Text style={[styles.emptyText, { color: theme.colors.outline }]}>No se encontraron vehículos</Text>
-                         </View>
+                        <View style={styles.emptyContainer}>
+                            <Icon source="magnify-close" size={40} color={theme.colors.outline} />
+                            <Text style={[styles.emptyText, { color: theme.colors.outline }]}>No se encontraron vehículos</Text>
+                        </View>
                     )}
                 />
             )}
@@ -152,6 +159,10 @@ const styles = StyleSheet.create({
     header: {
         paddingBottom: 15,
         elevation: 4,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.12,
+        shadowRadius: 4,
     },
     appbar: {
         backgroundColor: 'transparent',
@@ -164,54 +175,69 @@ const styles = StyleSheet.create({
         marginHorizontal: 15,
         borderRadius: 10,
         elevation: 2,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.08,
+        shadowRadius: 3,
+        minHeight: 44,
+        height: 44,
+    },
+    searchbarInput: {
+        paddingTop: 0,
+        paddingBottom: 8,
+        marginTop: 0,
     },
     list: {
         flex: 1,
+    },
+    listContent: {
         paddingHorizontal: 15,
-        paddingTop: 10,
+        paddingTop: 16,
+    },
+    itemWrapper: {
+        marginBottom: 6,
     },
     itemCard: {
-        marginVertical: 6,
-        borderRadius: 12,
+        borderRadius: 14,
         elevation: 2,
         shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.1,
-        shadowRadius: 3,
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.08,
+        shadowRadius: 4,
     },
     itemCardUnselected: {
         borderWidth: 2,
     },
     itemCardSelected: {
-        borderWidth: 2,
-        borderColor: 'transparent',
+        borderWidth: 0,
     },
     itemContent: {
         flexDirection: 'row',
         alignItems: 'center',
-        padding: 15,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
     },
     itemImage: {
-        width: 60,
-        height: 60,
-        borderRadius: 30,
-        marginRight: 15,
-        backgroundColor: '#eee',
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        marginRight: 12,
+        backgroundColor: '#E3F2FD',
     },
     itemText: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        flex: 1, // Para que el texto se ajuste
+        fontSize: 16,
+        fontWeight: '600',
+        flex: 1,
     },
     emptyContainer: {
-        alignItems: 'center', 
-        marginTop: 50, 
-        opacity: 0.5
+        alignItems: 'center',
+        marginTop: 50,
+        opacity: 0.6,
     },
     emptyText: {
-        marginTop: 10, 
-        fontSize: 16
-    }
+        marginTop: 10,
+        fontSize: 16,
+    },
 });
 
 export default ChangeVehicleScreen;

@@ -14,6 +14,8 @@ import { StatusBar } from 'expo-status-bar';
 import * as Application from 'expo-application';
 import { useServerConnection } from '@/hooks/use-server-connection';
 import { useAuthStore } from '@/store/authStore';
+import { pendingLocationService } from '@/services/PendingLocationService';
+import { EjetrackService } from '@/services/EjetrackService';
 
 const { width } = Dimensions.get('window');
 
@@ -36,6 +38,7 @@ const HomeScreen = () => {
     const [showPermissionModal, setShowPermissionModal] = useState(false);
     const [showBatteryModal, setShowBatteryModal] = useState(false);
     const [isStartingTracking, setIsStartingTracking] = useState(false);
+    const [isFinishingWithPending, setIsFinishingWithPending] = useState(false);
 
     // Mostrar modal de ubicación solo después de que se hayan pedido las notificaciones
     useEffect(() => {
@@ -113,21 +116,41 @@ const HomeScreen = () => {
     };
     const handleToggleTracking = async () => {
         if (isTrackingActive) {
-            Alert.alert(
-                "Finalizar Ruta",
-                "¿Estás seguro de que deseas finalizar el seguimiento de la ruta?",
-                [
-                    { text: "Cancelar", style: "cancel" },
-                    { 
-                        text: "Sí, finalizar", 
-                        onPress: async () => {
-                            await LocationTrackingService.stopTracking();
-                            await setIsTrackingActive(false);
-                        },
-                        style: "destructive"
+            const pendingCount = await pendingLocationService.getPendingCount();
+            if (pendingCount > 0) {
+                setIsFinishingWithPending(true);
+                try {
+                    let count = pendingCount;
+                    const maxAttempts = 50;
+                    let attempts = 0;
+                    while (count > 0 && attempts < maxAttempts) {
+                        await EjetrackService.processPendingLocations(true);
+                        await new Promise((r) => setTimeout(r, 1500));
+                        count = await pendingLocationService.getPendingCount();
+                        attempts++;
                     }
-                ]
-            );
+                } finally {
+                    await LocationTrackingService.stopTracking();
+                    await setIsTrackingActive(false);
+                    setIsFinishingWithPending(false);
+                }
+            } else {
+                Alert.alert(
+                    "Finalizar Ruta",
+                    "¿Estás seguro de que deseas finalizar el seguimiento de la ruta?",
+                    [
+                        { text: "Cancelar", style: "cancel" },
+                        {
+                            text: "Sí, finalizar",
+                            onPress: async () => {
+                                await LocationTrackingService.stopTracking();
+                                await setIsTrackingActive(false);
+                            },
+                            style: "destructive"
+                        }
+                    ]
+                );
+            }
         } else {
             setIsStartingTracking(true);
             try {
@@ -244,10 +267,10 @@ const HomeScreen = () => {
                 <View style={styles.gridContainer}>
                     <Pressable
                         onPress={handleToggleTracking}
-                        onPressIn={() => { buttonScale.value = withSpring(0.96, { damping: 15, stiffness: 400 }); }}
+                        onPressIn={() => { if (!isFinishingWithPending) buttonScale.value = withSpring(0.96, { damping: 15, stiffness: 400 }); }}
                         onPressOut={() => { buttonScale.value = withSpring(1); }}
                         style={styles.actionButtonWrapper}
-                        disabled={isStartingTracking}
+                        disabled={isStartingTracking || isFinishingWithPending}
                     >
                         <Animated.View style={buttonAnimatedStyle}>
                             <Card style={[styles.actionCard, { backgroundColor: 'transparent', elevation: 6, shadowOpacity: 0.2 }]}>
@@ -264,6 +287,11 @@ const HomeScreen = () => {
                                         <>
                                             <ActivityIndicator size="small" color="rgba(255,255,255,0.95)" style={{ marginBottom: 10 }} />
                                             <Text style={styles.actionLabel}>Iniciando...</Text>
+                                        </>
+                                    ) : isFinishingWithPending ? (
+                                        <>
+                                            <ActivityIndicator size="small" color="rgba(255,255,255,0.95)" style={{ marginBottom: 10 }} />
+                                            <Text style={styles.actionLabel}>Enviando puntos pendientes, aguarde...</Text>
                                         </>
                                     ) : (
                                         <>

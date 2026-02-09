@@ -1,98 +1,123 @@
 import { useEffect, useCallback, useRef } from 'react';
 import { useNetInfo } from '@react-native-community/netinfo';
-import { AppsApi } from '@/api'; 
+import { AppsApi } from '@/api';
 import { useServerStore } from '@/store/serverStore';
 import { EjetrackService } from '@/services/EjetrackService';
 import { useAuthStore } from '@/store/authStore';
 
+const DELAY_AFTER_RECONNECT_MS = 1500;  // Esperar a que la red esté estable tras salir de modo avión
+const AUTO_RETRY_DELAYS_MS = [3000, 8000]; // Reintentos automáticos si hay red pero servidor no responde
+
 export const useServerConnection = () => {
     const netInfo = useNetInfo();
     const { isAuthenticated, isHydrated } = useAuthStore();
-    const { 
-        isServerReachable, 
-        isChecking, 
-        serverData, 
-        setServerReachable, 
-        setChecking, 
-        setServerData 
+    const {
+        isServerReachable,
+        isChecking,
+        serverData,
+        setServerReachable,
+        setChecking,
+        setServerData
     } = useServerStore();
-    
-    // Referencia para evitar llamadas simultáneas (Debounce manual) a nivel de instancia
-    // y para evitar re-entradas si se usa en varios componentes
+
     const isRequestingRef = useRef(false);
+    const wasConnectedRef = useRef<boolean | null>(null);
 
     const checkServer = useCallback(async () => {
-        // 1. Si no hay hardware de red, marcamos offline inmediato
         if (netInfo.isConnected === false) {
             setServerReachable(false);
             return;
         }
 
-        // 2. Si ya hay una petición en vuelo (local o global), NO lanzamos otra
-        // Accedemos al estado actual del store para evitar dependencias circulares
         const { isChecking: globalIsChecking } = useServerStore.getState();
         if (isRequestingRef.current || globalIsChecking) return;
 
-        // Iniciamos bloqueo
         isRequestingRef.current = true;
         setChecking(true);
 
         try {
-            // Usamos la URL que mencionaste que devuelve la versión
-            // Timeout corto para no congelar la UI si la red es lenta
             const response = await AppsApi.get('/subscriptions/v1/applications/mobile/rndc', { timeout: 8000 });
-            
             console.log("✅ Servidor alcanzable (Heartbeat OK)");
-            
-            // Guardamos la data para que el Home la use (Evita segunda llamada)
-            setServerData(response.data); 
+            setServerData(response.data);
             setServerReachable(true);
         } catch (error) {
             console.warn("⚠️ Servidor inalcanzable:", error);
             setServerReachable(false);
         } finally {
-            // Liberamos bloqueo
             isRequestingRef.current = false;
             setChecking(false);
         }
     }, [netInfo.isConnected, setServerReachable, setChecking, setServerData]);
 
-    // Efecto 1: Reaccionar a cambios en NetInfo
+    // Efecto 1: Al recuperar red (ej. salir de modo avión), esperar un poco y comprobar automáticamente
     useEffect(() => {
-        if (netInfo.isConnected !== null) {
+        const nowConnected = netInfo.isConnected === true;
+        const wasConnected = wasConnectedRef.current;
+
+        if (netInfo.isConnected === null) return;
+
+        wasConnectedRef.current = nowConnected;
+
+        // Transición de sin red → con red: comprobar tras un delay para que la red esté estable
+        if (!wasConnected && nowConnected) {
+            console.log("[useServerConnection] 🌐 Red detectada. Comprobando servidor en breve...");
+            const t = setTimeout(() => {
+                checkServer();
+                if (isAuthenticated && isHydrated) {
+                    EjetrackService.processPendingLocations();
+                }
+            }, DELAY_AFTER_RECONNECT_MS);
+            return () => clearTimeout(t);
+        }
+
+        // Si ya teníamos red, comprobar de inmediato (ej. cambio de WiFi a datos)
+        if (nowConnected) {
             checkServer();
-            
-            // Si recuperamos conexión (incluso si es solo detectada por NetInfo) 
-            // intentamos procesar pendientes si estamos autenticados.
-            // Nota: processPendingLocations ahora verifica isServerReachable internamente.
-            if (netInfo.isConnected && isAuthenticated && isHydrated) {
-                console.log("[useServerConnection] 🌐 Conexión detectada y usuario autenticado. Iniciando procesamiento de pendientes...");
+            if (isAuthenticated && isHydrated) {
                 EjetrackService.processPendingLocations();
             }
+        } else {
+            setServerReachable(false);
         }
     }, [netInfo.isConnected, checkServer, isAuthenticated, isHydrated]);
 
-    // Efecto 2: Polling de respaldo (cada 30s) para mantener estado fresco y forzar sincronización
+    // Efecto 2: Con red pero servidor no alcanzable → reintentos automáticos (sin tocar "Reintentar")
     useEffect(() => {
-        let interval: any;
+        if (netInfo.isConnected !== true || isServerReachable) return;
+
+        const timeouts: ReturnType<typeof setTimeout>[] = [];
+        AUTO_RETRY_DELAYS_MS.forEach((delayMs, i) => {
+            const t = setTimeout(() => {
+                const { isServerReachable: current } = useServerStore.getState();
+                if (current) return;
+                console.log(`[useServerConnection] 🔄 Reintento automático ${i + 1}/${AUTO_RETRY_DELAYS_MS.length}...`);
+                checkServer();
+            }, delayMs);
+            timeouts.push(t);
+        });
+
+        return () => timeouts.forEach((id) => clearTimeout(id));
+    }, [netInfo.isConnected, isServerReachable, checkServer]);
+
+    // Efecto 3: Polling de respaldo cada 2 min cuando hay red
+    useEffect(() => {
+        let interval: ReturnType<typeof setInterval> | undefined;
         if (netInfo.isConnected === true) {
             interval = setInterval(() => {
                 checkServer();
-                // Forzar intento de sincronización periódica aunque no haya cambios de red detectados,
-                // solo si el usuario está autenticado y el estado hidratado.
                 if (isAuthenticated && isHydrated) {
                     EjetrackService.processPendingLocations();
                 }
             }, 120000);
         }
-        return () => clearInterval(interval);
+        return () => (interval ? clearInterval(interval) : undefined);
     }, [netInfo.isConnected, checkServer, isAuthenticated, isHydrated]);
 
     return {
         isConnectedToInternet: netInfo.isConnected,
         isServerReachable,
         serverData,
-        isChecking, 
+        isChecking,
         recheckConnection: checkServer
     };
 };

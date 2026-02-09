@@ -272,17 +272,13 @@ export default function LocationsScreen() {
                 }
             />
 
+            {/* Botón flotante con menú 
             <Portal>
                 <FAB.Group
                     open={menuVisible}
                     visible
                     icon={menuVisible ? 'close' : 'wrench'}
                     actions={[
-                        /*{
-                            icon: 'flash',
-                            label: 'Prueba de Estrés (100 pts)',
-                            onPress: handleStressTest,
-                        },*/
                         {
                             icon: 'delete-sweep',
                             label: 'Limpiar Historial',
@@ -297,6 +293,7 @@ export default function LocationsScreen() {
                     onStateChange={({ open }) => setMenuVisible(open)}
                 />
             </Portal>
+            */}
 
             <Snackbar
                 visible={snackbarVisible}

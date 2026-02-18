@@ -1,7 +1,7 @@
 import { openDatabaseSync, type SQLiteDatabase } from 'expo-sqlite';
 import { ALL_MIGRATIONS } from './migrations';
 
-const DB_NAME = 'drivers_app.db';
+const DB_NAME = 'rastreo_virtual.db';
 
 class DatabaseService {
     private db: SQLiteDatabase;

@@ -65,6 +65,19 @@ export async function requestBackgroundPermission(): Promise<boolean> {
 }
 
 /**
+ * Abre el diálogo del sistema para solicitar permiso de ubicación en segundo plano.
+ * Cuando el usuario tiene "mientras en uso", muestra la pantalla para cambiar a "Permitir todo el tiempo".
+ */
+export async function openLocationPermissionDialog(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  if ((Platform.Version as number) >= 29) {
+    await Location.requestBackgroundPermissionsAsync();
+  } else {
+    await openAppSettingsForLocation();
+  }
+}
+
+/**
  * Abre los ajustes de la app para que el usuario cambie permisos manualmente.
  */
 export async function openAppSettingsForLocation(): Promise<void> {
@@ -124,7 +137,10 @@ export async function prepareForTracking(): Promise<PrepareResult> {
     if (bgCurrent.status !== 'granted') {
       const granted = await requestBackgroundPermission();
       if (!granted) {
+<<<<<<< HEAD
         showGoToSettingsAlert('foreground_only', openAppSettingsForLocation);
+=======
+>>>>>>> bdb814cf1b21d80d6a9bc8e4c1cd252ab2b886c5
         return 'needs_settings';
       }
     }

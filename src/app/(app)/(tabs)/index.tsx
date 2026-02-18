@@ -4,8 +4,8 @@ import Animated, { useSharedValue, useAnimatedStyle, withSpring, withRepeat, wit
 import { Text, Card, useTheme, Icon, Banner, ActivityIndicator } from 'react-native-paper';
 import { useDeviceStore } from '@/store/deviceStore';
 import { LocationTrackingService } from '@/services/LocationTrackingService';
-import { prepareForTracking, getLocationPermissionStatus } from '@/services/LocationPermissionFlow';
-import { openAppSettingsForBattery, markBatteryModalShown, hasShownBatteryModal } from '@/services/OptimizationSetupService';
+import { prepareForTracking, getLocationPermissionStatus, openLocationPermissionDialog } from '@/services/LocationPermissionFlow';
+import { openAppSettingsForBattery, markBatteryModalShown, hasShownBatteryModal, isBatteryRestricted, clearBatterySettingsTrust } from '@/services/OptimizationSetupService';
 import { useCompanyStore } from '@/store/companyStore';
 import { useTripStore } from '@/store/tripStore';
 import { useRouter } from 'expo-router';
@@ -37,6 +37,7 @@ const HomeScreen = () => {
     const [latestVersionStr, setLatestVersionStr] = useState('');
     const [showPermissionModal, setShowPermissionModal] = useState(false);
     const [showBatteryModal, setShowBatteryModal] = useState(false);
+    const [showPermissionsRequiredModal, setShowPermissionsRequiredModal] = useState(false);
     const [isStartingTracking, setIsStartingTracking] = useState(false);
     const [isFinishingWithPending, setIsFinishingWithPending] = useState(false);
 
@@ -56,10 +57,6 @@ const HomeScreen = () => {
     const handlePermissionModalAccept = async () => {
         setShowPermissionModal(false);
         const result = await prepareForTracking();
-        if (result === 'ready' && Platform.OS === 'android') {
-            const alreadyShown = await hasShownBatteryModal();
-            if (!alreadyShown) setShowBatteryModal(true);
-        }
     };
 
     const handlePermissionModalSkip = () => {
@@ -67,9 +64,9 @@ const HomeScreen = () => {
     };
 
     const handleBatteryModalConfigurar = async () => {
-        await openAppSettingsForBattery();
-        await markBatteryModalShown();
         setShowBatteryModal(false);
+        await markBatteryModalShown();
+        await openAppSettingsForBattery();
     };
 
     const handleBatteryModalSkip = async () => {
@@ -155,9 +152,22 @@ const HomeScreen = () => {
             setIsStartingTracking(true);
             try {
                 const result = await prepareForTracking();
-                if (result !== 'ready') return;
+                if (result !== 'ready') {
+                    if (result === 'needs_settings' && Platform.OS === 'android') {
+                        const alreadyShown = await hasShownBatteryModal();
+                        if (!alreadyShown) {
+                            setShowBatteryModal(true);
+                        } else {
+                            setShowPermissionsRequiredModal(true);
+                        }
+                    }
+                    return;
+                }
+                if (Platform.OS === 'android' && (await isBatteryRestricted())) {
+                }
                 await LocationTrackingService.startTracking();
                 await setIsTrackingActive(true);
+                await clearBatterySettingsTrust();
             } finally {
                 setIsStartingTracking(false);
             }
@@ -248,7 +258,11 @@ const HomeScreen = () => {
                             <Text style={styles.vehiclePlate}>{currentDevice?.name || 'Sin Vehículo'}</Text>
                             <Text style={styles.vehicleCompany}>{currentCompany?.name || 'Sin Empresa'}</Text>
 
-                            <TouchableOpacity style={styles.changeVehicleButtonShadow} onPress={navigateToChangeVehicle}>
+                            <TouchableOpacity
+                                style={[styles.changeVehicleButtonShadow, isTrackingActive && { opacity: 0.5 }]}
+                                onPress={isTrackingActive ? undefined : navigateToChangeVehicle}
+                                disabled={isTrackingActive}
+                            >
                                 <LinearGradient
                                     colors={['#00A2FF', '#007AFF']}
                                     start={{ x: 0, y: 0.5 }}
@@ -390,6 +404,75 @@ const HomeScreen = () => {
                 </Pressable>
             </Modal>
 
+            {/* Modal permisos requeridos (Iniciar ruta sin permiso background) */}
+            <Modal
+                visible={showPermissionsRequiredModal}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowPermissionsRequiredModal(false)}
+            >
+                <Pressable
+                    style={styles.modalOverlay}
+                    onPress={() => setShowPermissionsRequiredModal(false)}
+                >
+                    <Pressable
+                        style={[styles.modalContent, { backgroundColor: theme.colors.surface }]}
+                        onPress={(e) => e.stopPropagation()}
+                    >
+                        <LinearGradient
+                            colors={isDark ? ['#1a237e', '#3949ab'] : ['#3a47d5', '#0072ff']}
+                            style={styles.modalHeader}
+                        >
+                            <Icon source="map-marker-radius" size={48} color="#fff" />
+                            <Text variant="titleLarge" style={styles.modalTitle}>
+                                Permiso requerido
+                            </Text>
+                        </LinearGradient>
+
+                        <View style={styles.modalBody}>
+                            <Text variant="bodyLarge" style={{ color: theme.colors.onSurface, marginBottom: 16, textAlign: 'center' }}>
+                                Para iniciar la ruta necesitamos acceso a tu ubicación en todo momento.
+                            </Text>
+                            <View style={[styles.modalStep, { backgroundColor: theme.colors.surfaceVariant }]}>
+                                <Text variant="labelLarge" style={{ color: theme.colors.primary, marginBottom: 4 }}>
+                                    Qué hacer
+                                </Text>
+                                <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                                    Ve a Ajustes → Permisos de la app y cambia la ubicación a <Text style={{ fontWeight: '700' }}>"Permitir todo el tiempo"</Text> para que el rastreo funcione correctamente.
+                                </Text>
+                            </View>
+                        </View>
+
+                        <View style={styles.modalActions}>
+                            <TouchableOpacity
+                                onPress={async () => {
+                                    setShowPermissionsRequiredModal(false);
+                                    await openLocationPermissionDialog();
+                                }}
+                                activeOpacity={0.8}
+                                style={styles.modalPrimaryButton}
+                            >
+                                <LinearGradient
+                                    colors={['#00C853', '#008f2b']}
+                                    style={styles.modalPrimaryButtonGradient}
+                                >
+                                    <Icon source="cog" size={22} color="#fff" />
+                                    <Text style={styles.modalPrimaryButtonText}>Ir a Ajustes</Text>
+                                </LinearGradient>
+                            </TouchableOpacity>
+                            <Pressable
+                                onPress={() => setShowPermissionsRequiredModal(false)}
+                                style={styles.modalSkipButton}
+                            >
+                                <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
+                                    Entendido
+                                </Text>
+                            </Pressable>
+                        </View>
+                    </Pressable>
+                </Pressable>
+            </Modal>
+
             {/* Modal de restricción de batería (Android) */}
             <Modal
                 visible={showBatteryModal}
@@ -425,9 +508,7 @@ const HomeScreen = () => {
                                 </Text>
                                 <Text variant="bodyMedium" style={{ color: theme.colors.onSurfaceVariant }}>
                                     1. Toca <Text style={{ fontWeight: '700' }}>"Batería"</Text> o "Uso de batería"{'\n'}
-                                    2. Toca <Text style={{ fontWeight: '700' }}>"Optimización de batería"</Text> o "No optimizar"{'\n'}
-                                    3. Busca <Text style={{ fontWeight: '700' }}>"Rastreo Virtual"</Text>{'\n'}
-                                    4. Selecciona <Text style={{ fontWeight: '700' }}>"Sin restricciones"</Text> o "No optimizar"
+                                    2. Selecciona <Text style={{ fontWeight: '700' }}>"Sin restricciones"</Text> o "No restringir"
                                 </Text>
                             </View>
                         </View>

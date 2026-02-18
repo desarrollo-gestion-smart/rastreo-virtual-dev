@@ -105,6 +105,44 @@ class PendingLocationService {
     }
 
     /**
+<<<<<<< HEAD
+=======
+     * Limpia paquetes duplicados existentes en la base de datos.
+     * Considera duplicados aquellos con misma posición (dentro de tolerancia) y tiempo cercano.
+     */
+    public async cleanDuplicateLocations(): Promise<number> {
+        try {
+            console.log('[PendingLocationService] 🧹 Iniciando limpieza de duplicados...');
+            
+            // Eliminar duplicados basados en posición y tiempo
+            // Mantenemos el registro más reciente de cada grupo de duplicados
+            const result = await this.db.runAsync(`
+                DELETE FROM location_history 
+                WHERE id NOT IN (
+                    SELECT MIN(id)
+                    FROM location_history
+                    WHERE synced = 0
+                    GROUP BY 
+                        device_id,
+                        CAST(latitude * 1000 AS INTEGER),
+                        CAST(longitude * 1000 AS INTEGER),
+                        CAST(timestamp / 60 AS INTEGER) -- Agrupar por minuto
+                )
+                AND synced = 0;
+            `);
+            
+            const deletedCount = result.changes || 0;
+            console.log(`[PendingLocationService] ✨ Limpieza completada. Eliminados ${deletedCount} paquetes duplicados.`);
+            
+            return deletedCount;
+        } catch (error) {
+            console.error('[PendingLocationService] ❌ Error en limpieza de duplicados:', error);
+            return 0;
+        }
+    }
+
+    /**
+>>>>>>> bdb814cf1b21d80d6a9bc8e4c1cd252ab2b886c5
      * Nota: savePendingLocation ya no es necesario aquí porque se guarda vía LocationHistoryService.
      * Se mantiene la firma por compatibilidad temporal si fuera necesario, pero vacía.
      */

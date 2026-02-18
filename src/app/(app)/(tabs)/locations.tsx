@@ -34,6 +34,24 @@ export default function LocationsScreen() {
         setPendingCount(count);
         setIsSyncing(EjetrackService.getSyncStatus());
         setLastSync(EjetrackService.getLastSyncTimestamp());
+<<<<<<< HEAD
+=======
+        
+        // Limpiar duplicados automáticamente si hay más de 100 paquetes pendientes
+        if (count > 100) {
+            try {
+                const deletedCount = await pendingLocationService.cleanDuplicateLocations();
+                if (deletedCount > 0) {
+                    console.log(`[AutoClean] Se eliminaron ${deletedCount} paquetes duplicados automáticamente.`);
+                    // Recargar el conteo después de la limpieza
+                    const newCount = await pendingLocationService.getPendingCount();
+                    setPendingCount(newCount);
+                }
+            } catch (error) {
+                console.error('[AutoClean] Error en limpieza automática de duplicados:', error);
+            }
+        }
+>>>>>>> bdb814cf1b21d80d6a9bc8e4c1cd252ab2b886c5
     }, []);
 
     const loadHistory = useCallback(async () => {

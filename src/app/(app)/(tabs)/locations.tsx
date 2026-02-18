@@ -34,6 +34,8 @@ export default function LocationsScreen() {
         setPendingCount(count);
         setIsSyncing(EjetrackService.getSyncStatus());
         setLastSync(EjetrackService.getLastSyncTimestamp());
+<<<<<<< HEAD
+=======
         
         // Limpiar duplicados automáticamente si hay más de 100 paquetes pendientes
         if (count > 100) {
@@ -49,6 +51,7 @@ export default function LocationsScreen() {
                 console.error('[AutoClean] Error en limpieza automática de duplicados:', error);
             }
         }
+>>>>>>> bdb814cf1b21d80d6a9bc8e4c1cd252ab2b886c5
     }, []);
 
     const loadHistory = useCallback(async () => {

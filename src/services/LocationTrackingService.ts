@@ -31,15 +31,9 @@ const SYNC_INTERVAL_MS = 60000; // 60 segundos
 const SYNC_DISTANCE_METERS = 3000; // 3000 metros
 const SYNC_ANGLE_DEGREES = 35; // 35 grados
 
-// Filtros anti-ruido GPS mejorados
-const MIN_SPEED_KMH = 5;       
-const MIN_MOVEMENT_METERS = 50;  
-const MAX_ACCURACY_METERS = 15;  
-const STATIONARY_SPEED_KMH = 1;  
-const STATIONARY_MOVEMENT_METERS = 5; 
 
-// Intervalo de GPS más largo para reducir frecuencia
-const GPS_INTERVAL_MS = 30000; // 30 segundos (antes 10)
+const MIN_SPEED_KMH = 2; 
+const MIN_MOVEMENT_METERS = 15;
 
 // Variables en memoria para acceso rápido durante la ejecución de la tarea
 let memLastCoordinate: { latitude: number; longitude: number } | null = null;
@@ -48,11 +42,6 @@ let memLastSyncHeading: number | null = null;
 let memAccumulatedDistance = 0;
 let isStateHydrated = false;
 let memLastSyncTime: number | null = null;
-
-// Variables para evitar paquetes duplicados
-let memLastSavedTimestamp: number | null = null;
-let memLastSavedCoordinate: { latitude: number; longitude: number } | null = null;
-const DUPLICATE_TOLERANCE_METERS = 10; // Tolerancia para considerar duplicado
 
 // Variable para guardar el tiempo de inicio y usar el cronómetro nativo
 let startTime: number | null = null;
@@ -170,10 +159,6 @@ export class LocationTrackingService {
             memLastSyncHeading = null;
             isStateHydrated = true;
             startTime = Date.now();
-            
-            // Limpiar variables de control de duplicados
-            memLastSavedTimestamp = null;
-            memLastSavedCoordinate = null;
         }
 
         const isStarted = await Location.hasStartedLocationUpdatesAsync(LOCATION_TRACKING_TASK);
@@ -198,8 +183,8 @@ export class LocationTrackingService {
 
             await Location.startLocationUpdatesAsync(LOCATION_TRACKING_TASK, {
                 accuracy: Location.Accuracy.BestForNavigation,
-                // le pido al gps que me envíe una posición cada 30 segundos (mejorado de 10s)
-                timeInterval: GPS_INTERVAL_MS, 
+                // le pido al gps que me envíe una posición cada 10 segundos
+                timeInterval: 10000, 
                 distanceInterval: 0, // Set to 0 to receive ALL updates and filter them in JS
                 showsBackgroundLocationIndicator: true,
                 foregroundService: {
@@ -357,16 +342,10 @@ export class LocationTrackingService {
         }
 
         memLastCoordinate = null;
-        memLastSyncCoordinate = null;
-        memLastSyncHeading = null;
         memAccumulatedDistance = 0;
         isStateHydrated = false;
         memLastSyncTime = null;
         startTime = null;
-        
-        // Limpiar variables de control de duplicados
-        memLastSavedTimestamp = null;
-        memLastSavedCoordinate = null;
         await AsyncStorage.removeItem(STORAGE_KEY_ACCUMULATED_DISTANCE);
         await AsyncStorage.removeItem(STORAGE_KEY_LAST_COORDINATE);
         await AsyncStorage.removeItem(STORAGE_KEY_LAST_SYNC_TIME);
@@ -545,6 +524,7 @@ TaskManager.defineTask(LOCATION_TRACKING_TASK, async ({ data, error }: any) => {
         }
 
         let lastSyncTime = memLastSyncTime || 0;
+        let batchSynced = false;
 
         let currentSpeed = 0;
         let hasValidUpdate = false; 
@@ -552,55 +532,31 @@ TaskManager.defineTask(LOCATION_TRACKING_TASK, async ({ data, error }: any) => {
         for (const location of locations) {
             const { latitude, longitude, speed, heading, accuracy } = location.coords;
             
-            // --- FILTER 1: ACCURACY (Anti-ZigZag) MEJORADO ---
-            // Descartar puntos con alta incertidumbre (> 15m radius)
-            if (accuracy && accuracy > MAX_ACCURACY_METERS) {
-                console.log(`[GPS] Ignored bad accuracy: ${accuracy}m > ${MAX_ACCURACY_METERS}m`);
+            // --- FILTER 1: ACCURACY (Anti-ZigZag) ---
+            // Discard points with high uncertainty (> 25m radius)
+            if (accuracy && accuracy > 25) {
+                console.log(`[GPS] Ignored bad accuracy: ${accuracy}m`);
                 continue; 
             }
 
             currentSpeed = speed ?? 0;
             const speedKmh = currentSpeed * 3.6;
 
-            // --- FILTER 2: DETECCIÓN DE VEHÍCULO DETENIDO ---
-            // Si velocidad es muy baja y movimiento es mínimo, está detenido
+            // --- FILTER 2: ANTI-DRIFT ---
+            // No enviar posición cuando el dispositivo está quieto (< 0.1 km/h)
+            if (speedKmh < MIN_SPEED_KMH) {
+                console.log(`[GPS] Ignored stationary (${speedKmh.toFixed(2)} km/h < ${MIN_SPEED_KMH})`);
+                continue;
+            }
+
+            // Distancia desde el último punto (para acumular recorrido)
             const distFromLast = memLastCoordinate 
                 ? getDistance(memLastCoordinate.latitude, memLastCoordinate.longitude, latitude, longitude)
                 : 0;
 
-            if (speedKmh < STATIONARY_SPEED_KMH && distFromLast < STATIONARY_MOVEMENT_METERS) {
-                console.log(`[GPS] Vehículo detenido - Speed: ${speedKmh.toFixed(2)} km/h, Movement: ${distFromLast.toFixed(1)}m`);
-                continue;
-            }
-
-            // --- FILTER 3: ANTI-DRIFT MEJORADO ---
-            // No enviar posición cuando el dispositivo está quieto (< 5 km/h)
-            if (speedKmh < MIN_SPEED_KMH) {
-                console.log(`[GPS] Ignored low speed (${speedKmh.toFixed(2)} km/h < ${MIN_SPEED_KMH})`);
-                continue;
-            }
-
             if (memLastCoordinate && distFromLast < MIN_MOVEMENT_METERS) {
                 console.log(`[GPS] Ignored low displacement (${distFromLast.toFixed(1)}m < ${MIN_MOVEMENT_METERS}m)`);
                 continue;
-            }
-
-            // --- FILTER 4: ANTI-DUPLICADOS ---
-            // Evitar guardar paquetes muy similares al último guardado
-            if (memLastSavedCoordinate && memLastSavedTimestamp) {
-                const distFromLastSaved = getDistance(
-                    memLastSavedCoordinate.latitude, 
-                    memLastSavedCoordinate.longitude, 
-                    latitude, 
-                    longitude
-                );
-                const timeFromLastSaved = Math.floor(location.timestamp / 1000) - memLastSavedTimestamp;
-                
-                // Si está muy cerca en espacio y tiempo, es probablemente un duplicado
-                if (distFromLastSaved < DUPLICATE_TOLERANCE_METERS && timeFromLastSaved < 30) {
-                    console.log(`[GPS] Ignored duplicate - Distance: ${distFromLastSaved.toFixed(1)}m < ${DUPLICATE_TOLERANCE_METERS}m, Time: ${timeFromLastSaved}s < 30s`);
-                    continue;
-                }
             }
 
             // --- VALID POINT LOGIC ---
@@ -610,10 +566,6 @@ TaskManager.defineTask(LOCATION_TRACKING_TASK, async ({ data, error }: any) => {
                 memAccumulatedDistance += distFromLast;
             }
             memLastCoordinate = { latitude, longitude };
-            
-            // Guardar referencia para detectar duplicados futuros
-            memLastSavedCoordinate = { latitude, longitude };
-            memLastSavedTimestamp = Math.floor(location.timestamp / 1000);
 
             // Sync Logic
             const timeDiff = Date.now() - lastSyncTime;
@@ -639,13 +591,11 @@ TaskManager.defineTask(LOCATION_TRACKING_TASK, async ({ data, error }: any) => {
                 if (angleDiff > 180) angleDiff = 360 - angleDiff;
             }
 
-            // Sync Logic MEJORADA: Requiere tiempo Y (distancia O ángulo) para evitar envíos innecesarios
-            const shouldSync = timeDiffSec >= SYNC_INTERVAL_SEC && 
-                               (distanceDiff >= SYNC_DISTANCE_METERS || 
-                                angleDiff >= SYNC_ANGLE_DEGREES);
+            const shouldSync = timeDiffSec >= SYNC_INTERVAL_SEC || 
+                               distanceDiff >= SYNC_DISTANCE_METERS || 
+                               angleDiff >= SYNC_ANGLE_DEGREES;
 
-            if (shouldSync) {
-                memLastSyncTime = Date.now();
+            if (shouldSync && !batchSynced) {
                 console.log(`[LocationTrackingTask] 🔄 Sync: T=${timeDiffSec}s, D=${distanceDiff.toFixed(1)}m`);
                 
                 const { useDeviceStore } = require('@/store/deviceStore');
@@ -694,10 +644,13 @@ TaskManager.defineTask(LOCATION_TRACKING_TASK, async ({ data, error }: any) => {
                 memLastSyncTime = Date.now();
                 memLastSyncCoordinate = { latitude, longitude };
                 memLastSyncHeading = heading || 0;
+                lastSyncTime = memLastSyncTime;
 
                 await AsyncStorage.setItem(STORAGE_KEY_LAST_SYNC_TIME, memLastSyncTime.toString());
                 await AsyncStorage.setItem(STORAGE_KEY_LAST_SYNC_COORDINATE, JSON.stringify(memLastSyncCoordinate));
                 await AsyncStorage.setItem(STORAGE_KEY_LAST_SYNC_HEADING, String(memLastSyncHeading ?? 0));
+                
+                batchSynced = true;
             }
         }
 

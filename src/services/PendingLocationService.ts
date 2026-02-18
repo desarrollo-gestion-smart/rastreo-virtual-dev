@@ -105,6 +105,8 @@ class PendingLocationService {
     }
 
     /**
+<<<<<<< HEAD
+=======
      * Limpia paquetes duplicados existentes en la base de datos.
      * Considera duplicados aquellos con misma posición (dentro de tolerancia) y tiempo cercano.
      */
@@ -140,6 +142,7 @@ class PendingLocationService {
     }
 
     /**
+>>>>>>> bdb814cf1b21d80d6a9bc8e4c1cd252ab2b886c5
      * Nota: savePendingLocation ya no es necesario aquí porque se guarda vía LocationHistoryService.
      * Se mantiene la firma por compatibilidad temporal si fuera necesario, pero vacía.
      */

@@ -10,14 +10,22 @@
     "preview": {
       "distribution": "internal"
     },
+<<<<<<< HEAD
+    "production": {}
+=======
     "production": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
       }
     }
+>>>>>>> bdb814cf1b21d80d6a9bc8e4c1cd252ab2b886c5
   },
   "submit": {
     "production": {}
   }
+<<<<<<< HEAD
 }
+=======
+}
+>>>>>>> bdb814cf1b21d80d6a9bc8e4c1cd252ab2b886c5

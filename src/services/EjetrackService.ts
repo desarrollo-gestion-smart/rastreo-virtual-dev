@@ -198,6 +198,9 @@ export class EjetrackService {
                     return;
                 }
 
+<<<<<<< HEAD
+                const count = await pendingLocationService.getPendingCount();
+=======
                 let count = await pendingLocationService.getPendingCount();
                 
                 // Limpieza automática de duplicados si hay muchos paquetes pendientes
@@ -214,6 +217,7 @@ export class EjetrackService {
                     }
                 }
                 
+>>>>>>> bdb814cf1b21d80d6a9bc8e4c1cd252ab2b886c5
                 const BATCH_SIZE = 100; // Procesar en bloques de 100 como se solicitó
                 const MAX_WAIT_TIME_SEC = 30; // 30 segundos máx. antes de forzar envío de pendientes
                 let shouldSend = forceAll;

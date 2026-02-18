@@ -137,10 +137,6 @@ export async function prepareForTracking(): Promise<PrepareResult> {
     if (bgCurrent.status !== 'granted') {
       const granted = await requestBackgroundPermission();
       if (!granted) {
-<<<<<<< HEAD
-        showGoToSettingsAlert('foreground_only', openAppSettingsForLocation);
-=======
->>>>>>> bdb814cf1b21d80d6a9bc8e4c1cd252ab2b886c5
         return 'needs_settings';
       }
     }

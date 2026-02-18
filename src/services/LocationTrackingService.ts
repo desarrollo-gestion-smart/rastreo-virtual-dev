@@ -200,7 +200,7 @@ export class LocationTrackingService {
                 accuracy: Location.Accuracy.BestForNavigation,
                 // le pido al gps que me envíe una posición cada 30 segundos (mejorado de 10s)
                 timeInterval: GPS_INTERVAL_MS, 
-                distanceInterval: 0, // Set to 0 to receive ALL updates and filter them in JS
+                distanceInterval: 3000, // Mínimo 50 metros entre puntos para evitar spam
                 showsBackgroundLocationIndicator: true,
                 foregroundService: {
                     notificationTitle: 'GPS Activo',

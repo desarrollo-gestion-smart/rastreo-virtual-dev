@@ -7,15 +7,15 @@ class PendingLocationService {
     /**
      * Obtiene todas las ubicaciones pendientes desde la tabla de historial con un límite opcional.
      */
-    public async getPendingLocations(limit?: number): Promise<{ id: number; payload: OsmanLocationPayload }[]> {
+    public async getPendingLocations(limit: number = 100): Promise<{ id: number; payload: OsmanLocationPayload }[]> {
         try {
             const query = `SELECT id, device_id, latitude, longitude, speed, timestamp, ignition, bearing, altitude, battery, event, power, priority 
                  FROM location_history 
                  WHERE synced = 0 
-                 ORDER BY timestamp ASC ${limit ? `LIMIT ${limit}` : ''};`;
+                 ORDER BY timestamp ASC LIMIT ?;`;
             
             // Seleccionamos las columnas necesarias para reconstruir el OsmanLocationPayload
-            const rows = await this.db.getAllAsync<any>(query);
+            const rows = await this.db.getAllAsync<any>(query, [limit]);
 
             return rows.map(row => ({
                 id: row.id,
